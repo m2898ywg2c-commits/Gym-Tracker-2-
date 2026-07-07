@@ -14,6 +14,54 @@ const DAYS = [
 const BENCH_PCTS = [0.875, 0.9, 0.925, 0.95, 0.975, 0.85];
 const SQUAT_PCTS = [0.792, 0.833, 0.854, 0.896, 0.917, 0.771];
 
+// a 5-6 minute warm-up tailored to each day's movement pattern, not loggable, just a routine to run through
+const WARMUPS = {
+  tue: {
+    title: "Chest & Push Warm-Up",
+    duration: "5-6 min",
+    steps: [
+      "Arm circles, 20 seconds each direction",
+      "Band pull-aparts or empty-bar pull-aparts, 15 reps",
+      "Push-up to downward dog, 8 slow reps",
+      "Shoulder dislocates with a band or broomstick, 10 reps",
+      "Light bench press with just the bar, 2 sets of 10",
+    ],
+  },
+  wed: {
+    title: "Legs, Glutes & Abs Warm-Up",
+    duration: "5-6 min",
+    steps: [
+      "Leg swings, 10 each direction per leg",
+      "Bodyweight squats, 15 reps, pause at the bottom on the last 3",
+      "Glute bridges, 15 reps",
+      "Walking knee hugs, 10 steps each leg",
+      "Empty bar or light goblet squats, 2 sets of 8",
+    ],
+  },
+  thu: {
+    title: "Chest & Biceps Warm-Up",
+    duration: "5-6 min",
+    steps: [
+      "Arm circles, 20 seconds each direction",
+      "Light band curls or empty-bar curls, 15 reps",
+      "Push-up to downward dog, 8 slow reps",
+      "Wrist and forearm rotations, 15 seconds each way",
+      "Light incline press with just the bar, 2 sets of 10",
+    ],
+  },
+  fri: {
+    title: "Thighs & Glutes Warm-Up",
+    duration: "5-6 min",
+    steps: [
+      "Leg swings, 10 each direction per leg",
+      "Walking lunges, no weight, 8 steps each leg",
+      "Glute bridges, 15 reps",
+      "Bodyweight Bulgarian split squat, 6 reps each leg",
+      "Ankle bounces or light calf raises, 15 reps",
+    ],
+  },
+};
+
 const roundTo25 = (n) => Math.round(n / 2.5) * 2.5;
 
 const mk = (id, name, sets, reps, note, query, increment = 2.5) => ({
@@ -381,6 +429,12 @@ function weekFromDate(startDate) {
   return Math.min(5, Math.floor(diffDays / 7));
 }
 
+// maps today's real weekday onto the plan, returns null on a rest day (Mon, Sat, Sun)
+function todaysDayKey() {
+  const map = { 2: "tue", 3: "wed", 4: "thu", 5: "fri" };
+  return map[new Date().getDay()] || null;
+}
+
 const DEFAULT_META = { blockNum: 1, startDate: todayStr(), benchBase: "", squatBase: "" };
 
 // ---------- DESIGN TOKENS ----------
@@ -396,6 +450,34 @@ const C = {
   good: "#3FAFA3",
 };
 
+function SplashScreen({ dayKey, onEnter }) {
+  const dayInfo = DAYS.find((d) => d.key === dayKey);
+  return (
+    <div
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center px-6 text-center"
+      style={{ backgroundColor: C.ink }}
+    >
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700;800&display=swap');
+      `}</style>
+      <Dumbbell size={40} color={C.accent} strokeWidth={2.5} />
+      <h1 className="mt-4 text-white" style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "3rem", letterSpacing: "0.03em" }}>
+        READY TO TRAIN?
+      </h1>
+      <p className="mt-2 text-sm" style={{ color: "#BFBFBF", fontFamily: "'Inter', sans-serif" }}>
+        {dayInfo ? `Today is ${dayInfo.label}, time for ${dayInfo.focus}.` : "Today's a rest day, recovery is training too."}
+      </p>
+      <button
+        onClick={onEnter}
+        className="mt-8 px-8 py-3 rounded-full font-bold text-sm"
+        style={{ backgroundColor: C.accent, color: "#FFFFFF", fontFamily: "'Inter', sans-serif" }}
+      >
+        {dayInfo ? "Let's go" : "Open tracker"}
+      </button>
+    </div>
+  );
+}
+
 export default function WorkoutTracker() {
   const [meta, setMeta] = useState(DEFAULT_META);
   const [weekIdx, setWeekIdx] = useState(0);
@@ -407,6 +489,8 @@ export default function WorkoutTracker() {
   const [loaded, setLoaded] = useState(false);
   const [savedFlash, setSavedFlash] = useState(null);
   const [activeTip, setActiveTip] = useState(null);
+  const [warmupOpen, setWarmupOpen] = useState(true);
+  const [showSplash, setShowSplash] = useState(true);
   const [view, setView] = useState("workout");
   const [restSeconds, setRestSeconds] = useState(null);
   const [timerOpen, setTimerOpen] = useState(false);
@@ -426,6 +510,8 @@ export default function WorkoutTracker() {
       } catch (e) {}
       setMeta(loadedMeta);
       setWeekIdx(weekFromDate(loadedMeta.startDate));
+      const todayKey = todaysDayKey();
+      if (todayKey) setDayKey(todayKey);
 
       try {
         const res = await storage.get(logsKeyForBlock(loadedMeta.blockNum));
@@ -508,6 +594,38 @@ export default function WorkoutTracker() {
     setView("workout");
   };
 
+  // bundles everything into one file so it can be moved to a new phone, or handed to Claude
+  // to help plan the next block based on what actually happened in this one
+  const exportAllData = () => {
+    const payload = { meta, logs, bodyLogs, archive, nutritionChecks, exportedAt: new Date().toISOString() };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `workout-tracker-backup-${todayStr()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const importAllData = async (file) => {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    if (!parsed.meta) throw new Error("That doesn't look like a workout tracker backup file.");
+    setMeta(parsed.meta);
+    setLogs(parsed.logs || {});
+    setBodyLogs(parsed.bodyLogs || {});
+    setArchive(parsed.archive || []);
+    setNutritionChecks(parsed.nutritionChecks || {});
+    setWeekIdx(weekFromDate(parsed.meta.startDate));
+    await storage.set(META_KEY, JSON.stringify(parsed.meta));
+    await storage.set(logsKeyForBlock(parsed.meta.blockNum), JSON.stringify(parsed.logs || {}));
+    await storage.set(bodyKeyForBlock(parsed.meta.blockNum), JSON.stringify(parsed.bodyLogs || {}));
+    await storage.set(ARCHIVE_KEY, JSON.stringify(parsed.archive || []));
+    await storage.set(NUTRITION_CHECKS_KEY, JSON.stringify(parsed.nutritionChecks || {}));
+  };
+
   const plan = useMemo(() => buildPlan(weekIdx, meta.benchBase, meta.squatBase), [weekIdx, meta.benchBase, meta.squatBase]);
   const exercises = plan[dayKey];
   const day = DAYS.find((d) => d.key === dayKey);
@@ -555,6 +673,13 @@ export default function WorkoutTracker() {
         .font-display { font-family: 'Bebas Neue', sans-serif; letter-spacing: 0.03em; }
         .font-sans { font-family: 'Inter', sans-serif; }
       `}</style>
+
+      {showSplash && (
+        <SplashScreen
+          dayKey={todaysDayKey()}
+          onEnter={() => setShowSplash(false)}
+        />
+      )}
 
       {/* Masthead */}
       <div className="sticky top-0 z-10" style={{ backgroundColor: C.ink }}>
@@ -697,6 +822,35 @@ export default function WorkoutTracker() {
           <div className="w-full h-1.5 rounded-full mt-2" style={{ backgroundColor: "#E4E2DB" }}>
             <div className="h-1.5 rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: C.accent }} />
           </div>
+
+          {WARMUPS[dayKey] && (
+            <div className="mt-4 rounded-xl border-2" style={{ backgroundColor: C.card, borderColor: C.line }}>
+              <button
+                onClick={() => setWarmupOpen((o) => !o)}
+                className="w-full flex items-center justify-between p-3"
+              >
+                <span className="text-sm font-bold flex items-center gap-2" style={{ color: C.ink }}>
+                  <Timer size={16} style={{ color: C.accent }} />
+                  {WARMUPS[dayKey].title} · {WARMUPS[dayKey].duration}
+                </span>
+                <span className="text-xs font-bold" style={{ color: C.accent }}>
+                  {warmupOpen ? "hide" : "show"}
+                </span>
+              </button>
+              {warmupOpen && (
+                <ol className="px-4 pb-4 space-y-1.5">
+                  {WARMUPS[dayKey].steps.map((s, i) => (
+                    <li key={i} className="text-sm flex gap-2" style={{ color: C.sub }}>
+                      <span className="font-bold shrink-0" style={{ color: C.ink }}>
+                        {i + 1}.
+                      </span>
+                      {s}
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          )}
 
           <div className="mt-4 space-y-3">
             {exercises.map((ex) => {
@@ -1477,3 +1631,4 @@ function HistoryView({ logs, onReset }) {
     </div>
   );
 }
+add splash screen and warm-ups
