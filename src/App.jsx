@@ -1631,4 +1631,3 @@ function HistoryView({ logs, onReset }) {
     </div>
   );
 }
-add splash screen and warm-ups
