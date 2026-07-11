@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { Dumbbell, ChevronLeft, ChevronRight, Check, Video, TrendingUp, RotateCcw, Flame, Settings, CalendarDays, Timer, BarChart3, MessageCircle, X } from "lucide-react";
+import { Dumbbell, ChevronLeft, ChevronRight, Check, Video, TrendingUp, RotateCcw, Flame, Settings, CalendarDays, Timer, BarChart3, MessageCircle, X, Mic } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { storage } from "./storage";
 
@@ -174,26 +174,68 @@ const BODY_FIELDS = [
 ];
 
 // post-workout meal per training day, aimed at recovery without blowing the daily calorie budget
+// two or three real post-workout options per training day, so it's genuinely about refuelling after training
+// rather than a generic day's meal plan unconnected to what you've just done
 const POST_WORKOUT = {
-  tue: { meal: "Grilled chicken breast, sweet potato, steamed greens", kcal: 450, protein: "40g protein" },
-  wed: { meal: "Baked salmon, brown rice, broccoli", kcal: 500, protein: "35g protein" },
-  thu: { meal: "Greek yoghurt, berries, honey, scoop of protein powder", kcal: 350, protein: "35g protein" },
-  fri: { meal: "Prawn stir-fry, quinoa, mixed vegetables", kcal: 470, protein: "38g protein" },
+  tue: [
+    { meal: "Grilled chicken breast, sweet potato, steamed greens", kcal: 450, protein: "40g protein" },
+    { meal: "Turkey mince stir-fry with rice and mixed vegetables", kcal: 480, protein: "38g protein" },
+    { meal: "Greek yoghurt, banana, honey, scoop of protein powder", kcal: 350, protein: "35g protein" },
+  ],
+  wed: [
+    { meal: "Baked salmon, brown rice, broccoli", kcal: 500, protein: "35g protein" },
+    { meal: "Lean beef mince with sweet potato mash and greens", kcal: 520, protein: "40g protein" },
+    { meal: "Cottage cheese, oats, berries, honey", kcal: 380, protein: "30g protein" },
+  ],
+  thu: [
+    { meal: "Greek yoghurt, berries, honey, scoop of protein powder", kcal: 350, protein: "35g protein" },
+    { meal: "Grilled chicken wrap with salad and hummus", kcal: 460, protein: "36g protein" },
+    { meal: "Prawn and quinoa bowl with roasted vegetables", kcal: 470, protein: "34g protein" },
+  ],
+  fri: [
+    { meal: "Prawn stir-fry, quinoa, mixed vegetables", kcal: 470, protein: "38g protein" },
+    { meal: "Baked chicken thigh, roasted potatoes, green beans", kcal: 510, protein: "37g protein" },
+    { meal: "Protein smoothie, oats, peanut butter, banana", kcal: 420, protein: "32g protein" },
+  ],
 };
 
-// one low-calorie dinner per day of the week, roughly 450-550kcal, designed to sit under a 2000kcal day
-// alongside a breakfast and lunch you're already managing yourself
-const DINNERS = [
-  { day: "Monday", meal: "Baked cod, roasted vegetables, small portion new potatoes", kcal: 480 },
-  { day: "Tuesday", meal: "Turkey chilli with cauliflower rice", kcal: 500 },
-  { day: "Wednesday", meal: "Grilled chicken Caesar salad, light dressing", kcal: 450 },
-  { day: "Thursday", meal: "Prawn and vegetable stir-fry, small portion noodles", kcal: 520 },
-  { day: "Friday", meal: "Baked salmon, asparagus, quinoa", kcal: 540 },
-  { day: "Saturday", meal: "Lean beef mince stuffed peppers", kcal: 500 },
-  { day: "Sunday", meal: "Vegetable and chickpea curry, cauliflower rice", kcal: 480 },
+const NUTRITION_CHECKS_KEY = "workout-nutrition-checks-v1";
+const notesKeyForBlock = (blockNum) => `workout-notes-block-${blockNum}`;
+
+// a bit of hype when you hit a PR, picked deterministically per exercise/week so it doesn't flicker while typing
+const STRENGTH_HYPE = [
+  "Wow, you're getting strong now.",
+  "That's a proper new best, nice work.",
+  "Numbers don't lie, you're stronger than last week.",
+  "Getting stronger by the week, keep this up.",
+  "That's the kind of progress that adds up fast.",
 ];
 
-const NUTRITION_CHECKS_KEY = "workout-nutrition-checks-v1";
+function hypeFor(seed) {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  return STRENGTH_HYPE[hash % STRENGTH_HYPE.length];
+}
+
+const WAIST_UP_COMMENTS = [
+  "No drama, everyone has a heavier week now and then. Back at it.",
+  "A touch more this week, nothing a good week won't sort.",
+  "Numbers crept up slightly, happens to everyone, onwards.",
+];
+const WAIST_DOWN_COMMENTS = [
+  "Waist's heading the right way, nice work.",
+  "Trimming down nicely, keep this up.",
+  "That's a solid drop this week, well done.",
+];
+
+function waistComment(diffNum, weekIdx) {
+  const bank = diffNum > 0 ? WAIST_UP_COMMENTS : diffNum < 0 ? WAIST_DOWN_COMMENTS : null;
+  if (!bank) return null;
+  const seed = "waist" + weekIdx;
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  return bank[hash % bank.length];
+}
 
 // pre-written coaching notes, no live AI, just genuinely useful cues for the moment you finish a set
 const COACH_TIPS = {
@@ -358,8 +400,36 @@ const ARCHIVE_KEY = "workout-archive-v1";
 const logsKeyForBlock = (blockNum) => `workout-logs-block-${blockNum}`;
 const bodyKeyForBlock = (blockNum) => `workout-body-block-${blockNum}`;
 const logKey = (week, day, exerciseId) => `w${week + 1}-${day}-${exerciseId}`;
+const dayNoteKey = (week, day) => `w${week + 1}-${day}`;
 
 // returns a fixed-length array of {weight, reps} for every set of an exercise, filling in blanks
+const WORD_NUMS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+function toNum(str) {
+  if (!str) return null;
+  const n = parseFloat(str);
+  if (!isNaN(n)) return n;
+  return WORD_NUMS[String(str).toLowerCase()] || null;
+}
+
+// understands phrases like "set 1, 20kg for 5" or "rep one, 20 kilos for five", typed or dictated
+function parseQuickEntry(text) {
+  if (!text) return null;
+  const lower = text.toLowerCase();
+  const setMatch = lower.match(/(?:set|rep)s?\s*(\d+|one|two|three|four|five|six|seven|eight|nine|ten)/);
+  const weightMatch = lower.match(/(\d+(?:\.\d+)?)\s*(?:kg|kilos?|kilograms?)/);
+  const repsMatch =
+    lower.match(/for\s*(\d+|one|two|three|four|five|six|seven|eight|nine|ten)/) ||
+    lower.match(/x\s*(\d+|one|two|three|four|five|six|seven|eight|nine|ten)/) ||
+    lower.match(/(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*reps?/);
+  const setNum = setMatch ? toNum(setMatch[1]) : null;
+  if (!setNum) return null;
+  return {
+    setIndex: setNum - 1,
+    weight: weightMatch ? weightMatch[1] : null,
+    reps: repsMatch ? toNum(repsMatch[1]) : null,
+  };
+}
+
 function getSets(logs, weekIdx, dayKey, exerciseId, numSets) {
   const entry = logs[logKey(weekIdx, dayKey, exerciseId)];
   const sets = (entry && entry.sets) || [];
@@ -494,10 +564,14 @@ export default function WorkoutTracker() {
   const [bodyLogs, setBodyLogs] = useState({});
   const [archive, setArchive] = useState([]);
   const [nutritionChecks, setNutritionChecks] = useState({});
+  const [dayNotes, setDayNotes] = useState({});
   const [loaded, setLoaded] = useState(false);
   const [savedFlash, setSavedFlash] = useState(null);
   const [activeTip, setActiveTip] = useState(null);
   const [warmupOpen, setWarmupOpen] = useState(true);
+  const [quickEntryDrafts, setQuickEntryDrafts] = useState({});
+  const [listeningFor, setListeningFor] = useState(null);
+  const speechSupported = typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
   const [showSplash, setShowSplash] = useState(true);
   const [view, setView] = useState("workout");
   const [restSeconds, setRestSeconds] = useState(null);
@@ -536,6 +610,10 @@ export default function WorkoutTracker() {
       try {
         const res = await storage.get(NUTRITION_CHECKS_KEY);
         if (res && res.value) setNutritionChecks(JSON.parse(res.value));
+      } catch (e) {}
+      try {
+        const res = await storage.get(notesKeyForBlock(loadedMeta.blockNum));
+        if (res && res.value) setDayNotes(JSON.parse(res.value));
       } catch (e) {}
       setLoaded(true);
     })();
@@ -583,10 +661,22 @@ export default function WorkoutTracker() {
     }
   }, []);
 
+  const persistNotes = useCallback(
+    async (next) => {
+      setDayNotes(next);
+      try {
+        await storage.set(notesKeyForBlock(meta.blockNum), JSON.stringify(next));
+      } catch (e) {
+        console.error("Could not save", e);
+      }
+    },
+    [meta.blockNum]
+  );
+
   const startNewBlock = async (newStartDate, newBenchBase, newSquatBase) => {
     const nextArchive = [
       ...archive,
-      { blockNum: meta.blockNum, startDate: meta.startDate, benchBase: meta.benchBase, squatBase: meta.squatBase, logs, bodyLogs },
+      { blockNum: meta.blockNum, startDate: meta.startDate, benchBase: meta.benchBase, squatBase: meta.squatBase, logs, bodyLogs, dayNotes },
     ];
     setArchive(nextArchive);
     try {
@@ -598,6 +688,7 @@ export default function WorkoutTracker() {
     await persistMeta(newMeta);
     setLogs({});
     setBodyLogs({});
+    setDayNotes({});
     setWeekIdx(weekFromDate(newStartDate));
     setView("workout");
   };
@@ -605,7 +696,7 @@ export default function WorkoutTracker() {
   // bundles everything into one file so it can be moved to a new phone, or handed to Claude
   // to help plan the next block based on what actually happened in this one
   const exportAllData = () => {
-    const payload = { meta, logs, bodyLogs, archive, nutritionChecks, exportedAt: new Date().toISOString() };
+    const payload = { meta, logs, bodyLogs, archive, nutritionChecks, dayNotes, exportedAt: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -626,12 +717,14 @@ export default function WorkoutTracker() {
     setBodyLogs(parsed.bodyLogs || {});
     setArchive(parsed.archive || []);
     setNutritionChecks(parsed.nutritionChecks || {});
+    setDayNotes(parsed.dayNotes || {});
     setWeekIdx(weekFromDate(parsed.meta.startDate));
     await storage.set(META_KEY, JSON.stringify(parsed.meta));
     await storage.set(logsKeyForBlock(parsed.meta.blockNum), JSON.stringify(parsed.logs || {}));
     await storage.set(bodyKeyForBlock(parsed.meta.blockNum), JSON.stringify(parsed.bodyLogs || {}));
     await storage.set(ARCHIVE_KEY, JSON.stringify(parsed.archive || []));
     await storage.set(NUTRITION_CHECKS_KEY, JSON.stringify(parsed.nutritionChecks || {}));
+    await storage.set(notesKeyForBlock(parsed.meta.blockNum), JSON.stringify(parsed.dayNotes || {}));
   };
 
   const plan = useMemo(() => buildPlan(weekIdx, meta.benchBase, meta.squatBase), [weekIdx, meta.benchBase, meta.squatBase]);
@@ -652,6 +745,35 @@ export default function WorkoutTracker() {
       i === setIdx ? { ...(existingSets[i] || { weight: "", reps: "" }), [field]: value } : existingSets[i] || { weight: "", reps: "" }
     );
     setLogs({ ...logs, [key]: { ...existing, sets: newSets } });
+  };
+
+  // reads a phrase like "set 1, 20kg for 5" (typed or dictated) and fills the matching set row
+  const applyQuickEntry = (exerciseId, text, numSets) => {
+    const parsed = parseQuickEntry(text);
+    if (!parsed || parsed.setIndex < 0 || parsed.setIndex >= numSets) return false;
+    if (parsed.weight !== null) updateSetLog(exerciseId, parsed.setIndex, "weight", String(parsed.weight), numSets);
+    if (parsed.reps !== null) updateSetLog(exerciseId, parsed.setIndex, "reps", String(parsed.reps), numSets);
+    setQuickEntryDrafts((d) => ({ ...d, [exerciseId]: "" }));
+    return true;
+  };
+
+  // in-app mic button, a bonus where the phone supports it; dictation via the keyboard mic works everywhere regardless
+  const startVoiceEntry = (exerciseId, numSets) => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+    const recognition = new SR();
+    recognition.lang = "en-GB";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (e) => {
+      const transcript = e.results[0][0].transcript;
+      setQuickEntryDrafts((d) => ({ ...d, [exerciseId]: transcript }));
+      applyQuickEntry(exerciseId, transcript, numSets);
+    };
+    recognition.onerror = () => setListeningFor(null);
+    recognition.onend = () => setListeningFor(null);
+    setListeningFor(exerciseId);
+    recognition.start();
   };
 
   const saveEntry = (exerciseId) => {
@@ -891,6 +1013,11 @@ export default function WorkoutTracker() {
                           </span>
                         )}
                       </div>
+                      {pr && (
+                        <p className="text-xs font-semibold mt-0.5" style={{ color: C.accent }}>
+                          {hypeFor(ex.id + weekIdx)}
+                        </p>
+                      )}
                       <p className="text-sm font-semibold mt-0.5" style={{ color: C.sub }}>
                         {ex.type === "cardio" ? ex.target : `${ex.sets} sets × ${ex.reps} reps`}
                       </p>
@@ -959,6 +1086,40 @@ export default function WorkoutTracker() {
                     </div>
                   ) : (
                     <div className="mt-3 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={quickEntryDrafts[ex.id] || ""}
+                          onChange={(e) => setQuickEntryDrafts((d) => ({ ...d, [ex.id]: e.target.value }))}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") applyQuickEntry(ex.id, quickEntryDrafts[ex.id], ex.sets);
+                          }}
+                          placeholder="Say or type: set 1, 20kg for 5"
+                          className="flex-1 rounded-lg px-3 py-2 outline-none text-sm border-2"
+                          style={{ backgroundColor: "#FAFAF7", color: C.ink, borderColor: "#DDDBD5" }}
+                        />
+                        {speechSupported && (
+                          <button
+                            onClick={() => startVoiceEntry(ex.id, ex.sets)}
+                            className="h-[38px] w-[38px] shrink-0 rounded-lg flex items-center justify-center"
+                            style={
+                              listeningFor === ex.id
+                                ? { backgroundColor: C.accent, color: "#FFFFFF" }
+                                : { backgroundColor: C.ink, color: "#FFFFFF" }
+                            }
+                            aria-label="Voice entry"
+                          >
+                            <Mic size={16} />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => applyQuickEntry(ex.id, quickEntryDrafts[ex.id], ex.sets)}
+                          className="h-[38px] px-3 shrink-0 rounded-lg text-sm font-bold"
+                          style={{ backgroundColor: "#EFEDE7", color: C.ink }}
+                        >
+                          Fill
+                        </button>
+                      </div>
                       {setRows.map((s, i) => (
                         <div key={i} className="flex items-center gap-2">
                           <span className="text-xs font-bold w-10 shrink-0" style={{ color: C.sub }}>
@@ -1024,13 +1185,31 @@ export default function WorkoutTracker() {
               )}
             </div>
           )}
+
+          <div className="mt-4 rounded-xl p-4 border-2" style={{ backgroundColor: C.card, borderColor: C.line }}>
+            <p className="text-sm font-bold" style={{ color: C.ink }}>
+              Notes for today
+            </p>
+            <p className="text-xs mt-0.5 mb-2" style={{ color: C.sub }}>
+              How did it feel, anything to remember for next time, anything that niggled. This gets saved and can be
+              handed over when planning the next block.
+            </p>
+            <textarea
+              value={dayNotes[dayNoteKey(weekIdx, dayKey)] || ""}
+              onChange={(e) => persistNotes({ ...dayNotes, [dayNoteKey(weekIdx, dayKey)]: e.target.value })}
+              placeholder="e.g. left knee felt a bit off on the last two sets of squats, dropped the weight slightly"
+              rows={3}
+              className="w-full rounded-lg px-3 py-2 outline-none text-sm border-2"
+              style={{ backgroundColor: "#FAFAF7", color: C.ink, borderColor: "#DDDBD5" }}
+            />
+          </div>
         </div>
       )}
 
       {view === "history" && <HistoryView logs={logs} onReset={() => persist({})} />}
       {view === "body" && <BodyView bodyLogs={bodyLogs} weekIdx={weekIdx} setWeekIdx={setWeekIdx} onSave={persistBody} />}
       {view === "nutrition" && <NutritionView checks={nutritionChecks} onSave={persistNutrition} />}
-      {view === "report" && <ReportView logs={logs} bodyLogs={bodyLogs} meta={meta} archive={archive} />}
+      {view === "report" && <ReportView logs={logs} bodyLogs={bodyLogs} meta={meta} archive={archive} dayNotes={dayNotes} />}
       {view === "settings" && (
         <SettingsView
           meta={meta}
@@ -1282,7 +1461,7 @@ function StatCard({ label, value, sub }) {
   );
 }
 
-function ReportView({ logs, bodyLogs, meta, archive }) {
+function ReportView({ logs, bodyLogs, meta, archive, dayNotes }) {
   const tonnageSeries = useMemo(() => weeklyTonnageSeries(logs, meta.benchBase, meta.squatBase), [logs, meta.benchBase, meta.squatBase]);
   const benchSeries = useMemo(() => weeklyTopLiftSeries(logs, "tue", "bench", 5), [logs]);
   const squatSeries = useMemo(() => weeklyTopLiftSeries(logs, "wed", "squat", 5), [logs]);
@@ -1415,6 +1594,35 @@ function ReportView({ logs, bodyLogs, meta, archive }) {
         </>
       )}
 
+      {Object.values(dayNotes || {}).some((n) => n && n.trim()) && (
+        <>
+          <h3 className="font-display text-xl mt-6" style={{ color: C.ink }}>
+            SESSION NOTES
+          </h3>
+          <p className="text-xs mb-2" style={{ color: C.sub }}>
+            Everything logged this block, in one place, ready to hand over when planning the next one.
+          </p>
+          <div className="space-y-2">
+            {Array.from({ length: 6 }, (_, w) => w).map((w) =>
+              DAYS.map((d) => {
+                const note = dayNotes[dayNoteKey(w, d.key)];
+                if (!note || !note.trim()) return null;
+                return (
+                  <div key={`${w}-${d.key}`} className="rounded-lg p-3 border-2" style={{ backgroundColor: C.card, borderColor: C.line }}>
+                    <p className="text-xs font-bold" style={{ color: C.accent }}>
+                      Week {w + 1}, {d.label}
+                    </p>
+                    <p className="text-sm mt-0.5" style={{ color: C.ink }}>
+                      {note}
+                    </p>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </>
+      )}
+
       <p className="text-sm mt-6 text-center" style={{ color: C.note }}>
         This report updates live as you log. When you start a new block, it archives here and a fresh report begins.
       </p>
@@ -1423,86 +1631,63 @@ function ReportView({ logs, bodyLogs, meta, archive }) {
 }
 
 function NutritionView({ checks, onSave }) {
-  const toggleDinner = (day) => {
-    onSave({ ...checks, [day]: !checks[day] });
+  const toggleMeal = (dayKey, idx) => {
+    const key = `${dayKey}-${idx}`;
+    onSave({ ...checks, [key]: !checks[key] });
   };
 
   return (
     <div className="max-w-2xl mx-auto px-4 mt-5 pb-6">
       <h2 className="font-display text-2xl" style={{ color: C.ink }}>
-        POST-WORKOUT FUEL
+        POST-WORKOUT NUTRITION
       </h2>
       <p className="text-sm mt-1 mb-3" style={{ color: C.sub }}>
-        Eat within 60 to 90 minutes of training to help recovery, without wrecking the day's calorie budget.
+        Eat within 60 to 90 minutes of training to help recovery. A few options for each day, pick whichever you fancy
+        or have in.
       </p>
-      <div className="space-y-3">
-        {DAYS.map((d) => {
-          const meal = POST_WORKOUT[d.key];
-          return (
-            <div key={d.key} className="rounded-xl p-4 border-2" style={{ backgroundColor: C.card, borderColor: C.line }}>
-              <div className="flex items-center justify-between">
-                <p className="font-bold text-sm" style={{ color: C.ink }}>
-                  {d.label}
-                </p>
-                <span className="text-xs font-bold" style={{ color: C.accent }}>
-                  ~{meal.kcal} kcal
-                </span>
-              </div>
-              <p className="text-sm mt-1" style={{ color: C.ink }}>
-                {meal.meal}
-              </p>
-              <p className="text-xs mt-1" style={{ color: C.sub }}>
-                {meal.protein}
-              </p>
+      <div className="space-y-5">
+        {DAYS.map((d) => (
+          <div key={d.key}>
+            <h3 className="font-display text-xl" style={{ color: C.ink }}>
+              {d.label.toUpperCase()}
+            </h3>
+            <div className="space-y-2 mt-2">
+              {POST_WORKOUT[d.key].map((meal, i) => {
+                const done = !!checks[`${d.key}-${i}`];
+                return (
+                  <button
+                    key={i}
+                    onClick={() => toggleMeal(d.key, i)}
+                    className="w-full text-left rounded-xl p-4 border-2 flex items-start justify-between gap-3 transition"
+                    style={{ backgroundColor: done ? C.ink : C.card, borderColor: C.line }}
+                  >
+                    <div>
+                      <p className="text-sm font-semibold" style={{ color: done ? "#FFFFFF" : C.ink }}>
+                        {meal.meal}
+                      </p>
+                      <p className="text-xs mt-1" style={{ color: done ? "#D9D9D9" : C.sub }}>
+                        {meal.protein}
+                      </p>
+                    </div>
+                    <div className="flex flex-col items-end gap-2 shrink-0">
+                      <span className="text-xs font-bold" style={{ color: done ? "#FFFFFF" : C.accent }}>
+                        ~{meal.kcal} kcal
+                      </span>
+                      <span
+                        className="w-6 h-6 rounded-full border-2 flex items-center justify-center"
+                        style={{ borderColor: done ? "#FFFFFF" : C.line, backgroundColor: done ? C.accent : "transparent" }}
+                      >
+                        {done && <Check size={14} color="#FFFFFF" />}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
-          );
-        })}
+          </div>
+        ))}
       </div>
-
-      <h2 className="font-display text-2xl mt-7" style={{ color: C.ink }}>
-        LOW-CALORIE DINNERS
-      </h2>
-      <p className="text-sm mt-1 mb-3" style={{ color: C.sub }}>
-        One dinner per day, roughly 450 to 550 kcal, leaving room for the breakfast and lunch you've already got sorted.
-        Tick off as you go.
-      </p>
-      <div className="space-y-3">
-        {DINNERS.map((d) => {
-          const done = !!checks[d.day];
-          return (
-            <button
-              key={d.day}
-              onClick={() => toggleDinner(d.day)}
-              className="w-full text-left rounded-xl p-4 border-2 flex items-start justify-between gap-3 transition"
-              style={{
-                backgroundColor: done ? C.ink : C.card,
-                borderColor: C.line,
-              }}
-            >
-              <div>
-                <p className="font-bold text-sm" style={{ color: done ? "#FFFFFF" : C.ink }}>
-                  {d.day}
-                </p>
-                <p className="text-sm mt-1" style={{ color: done ? "#D9D9D9" : C.ink }}>
-                  {d.meal}
-                </p>
-              </div>
-              <div className="flex flex-col items-end gap-2 shrink-0">
-                <span className="text-xs font-bold" style={{ color: done ? "#FFFFFF" : C.accent }}>
-                  ~{d.kcal} kcal
-                </span>
-                <span
-                  className="w-6 h-6 rounded-full border-2 flex items-center justify-center"
-                  style={{ borderColor: done ? "#FFFFFF" : C.line, backgroundColor: done ? C.accent : "transparent" }}
-                >
-                  {done && <Check size={14} color="#FFFFFF" />}
-                </span>
-              </div>
-            </button>
-          );
-        })}
-      </div>
-      <p className="text-sm mt-4 text-center" style={{ color: C.note }}>
+      <p className="text-sm mt-5 text-center" style={{ color: C.note }}>
         These are a starting point, swap ingredients for whatever you like as long as you're in a similar ballpark.
       </p>
     </div>
@@ -1556,25 +1741,32 @@ function BodyView({ bodyLogs, weekIdx, setWeekIdx, onSave }) {
           const start = startVal(f.key);
           const diff = start && val ? (parseFloat(val) - parseFloat(start)).toFixed(1) : null;
           return (
-            <div key={f.key} className="rounded-xl p-4 border-2 flex items-center gap-3" style={{ backgroundColor: C.card, borderColor: C.line }}>
-              <div className="flex-1">
-                <label className="text-[10px] uppercase tracking-wide font-bold" style={{ color: C.sub }}>
-                  {f.label} ({f.unit})
-                </label>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  value={val}
-                  onChange={(e) => updateField(f.key, e.target.value)}
-                  placeholder="0"
-                  className="w-full mt-1 rounded-lg px-3 py-2 outline-none text-sm border-2 font-semibold"
-                  style={{ backgroundColor: "#FAFAF7", color: C.ink, borderColor: "#DDDBD5" }}
-                />
-              </div>
-              {diff !== null && weekIdx > 0 && (
-                <div className="text-xs font-bold shrink-0" style={{ color: diff.startsWith("-") ? C.good : diff === "0.0" ? C.sub : C.accent }}>
-                  {diff > 0 ? `+${diff}` : diff} vs W1
+            <div key={f.key} className="rounded-xl p-4 border-2" style={{ backgroundColor: C.card, borderColor: C.line }}>
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <label className="text-[10px] uppercase tracking-wide font-bold" style={{ color: C.sub }}>
+                    {f.label} ({f.unit})
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    value={val}
+                    onChange={(e) => updateField(f.key, e.target.value)}
+                    placeholder="0"
+                    className="w-full mt-1 rounded-lg px-3 py-2 outline-none text-sm border-2 font-semibold"
+                    style={{ backgroundColor: "#FAFAF7", color: C.ink, borderColor: "#DDDBD5" }}
+                  />
                 </div>
+                {diff !== null && weekIdx > 0 && (
+                  <div className="text-xs font-bold shrink-0" style={{ color: diff.startsWith("-") ? C.good : diff === "0.0" ? C.sub : C.accent }}>
+                    {diff > 0 ? `+${diff}` : diff} vs W1
+                  </div>
+                )}
+              </div>
+              {f.key === "waist" && diff !== null && diff !== "0.0" && weekIdx > 0 && (
+                <p className="text-xs font-semibold mt-2" style={{ color: parseFloat(diff) > 0 ? C.sub : C.good }}>
+                  {waistComment(parseFloat(diff), weekIdx)}
+                </p>
               )}
             </div>
           );
