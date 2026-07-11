@@ -75,12 +75,12 @@ const mk = (id, name, sets, reps, note, query, increment = 2.5) => ({
   video: `https://www.youtube.com/results?search_query=${encodeURIComponent(query || name + " proper form")}`,
 });
 
-const mkCardio = (id, name, note, query) => ({
+const mkCardio = (id, name, note, query, target = "500m") => ({
   id,
   name,
   note,
   type: "cardio",
-  target: "500m",
+  target,
   video: `https://www.youtube.com/results?search_query=${encodeURIComponent(query || name + " technique")}`,
 });
 
@@ -96,8 +96,11 @@ const CARDIO_NOTES = [
 function conditioning(weekIdx) {
   const note = CARDIO_NOTES[weekIdx];
   return [
-    mkCardio("skierg_500", "SkiErg 500m", note, "skierg technique 500m"),
-    mkCardio("row_500", "Row 500m", note, "rowing machine technique 500m Concept2"),
+    mkCardio("skierg_500", "SkiErg 500m", note, "skierg technique 500m", "500m"),
+    mkCardio("row_500", "Row 500m", note, "rowing machine technique 500m Concept2", "500m"),
+    mkCardio("battle_ropes", "Battle Ropes", note, "battle ropes technique intervals", "6 x 30 sec on / 30 sec off"),
+    mkCardio("sled_push_pull", "Sled Push & Pull", note, "sled push pull technique HYROX", "20m push + 20m pull"),
+    mkCardio("hyrox_lunge_carry", "Weighted Lunge Walk", note, "hyrox sandbag lunge technique", "100m"),
   ];
 }
 
@@ -124,7 +127,8 @@ function buildPlan(weekIdx, benchBase, squatBase) {
     wed: [
       mk("squat", "Back Squat", 5, "5", squatNote, "back squat technique Squat University", 2.5),
       mk("rdl", "Romanian Deadlift", 4, "8", "Feel it in the hamstrings, not the lower back", "romanian deadlift form", 2.5),
-      mk("lunges", "Walking Lunges", 3, "12 per leg", "Add dumbbells once bodyweight is easy", "walking lunges form", 1),
+      mk("lunges", "Weighted Walking Lunges", 3, "12 per leg", "HYROX-relevant, keep torso upright and stride controlled rather than rushed", "walking lunges form", 1),
+      mk("sled_push", "Weighted Sled Push", 4, "20m", "Low body angle, drive through the legs, this is the actual HYROX load, not a light warm-up", "sled push technique HYROX", 5),
       mk("hip_thrust", "Hip Thrust", 4, "10", "Full lockout, squeeze glutes hard", "barbell hip thrust technique", 2.5),
       mk("leg_press", "Leg Press", 3, "15", "Full range, don't lock knees out hard", "leg press proper form", 5),
       mk("woodchop", "Cable Woodchop", 3, "12 per side", "Rotate through the core, not just arms", "cable woodchop technique", 1),
@@ -220,6 +224,10 @@ const COACH_TIPS = {
   bicycle_crunch: "Slow and controlled beats fast and sloppy every time here, rotate your ribcage towards the opposite knee rather than just pulling with your neck.",
   skierg_500: "Drive with your legs first, then finish with your arms, not the other way round. Long powerful pulls beat short frantic ones.",
   row_500: "Legs, then hips, then arms on the drive, reverse it coming back. If your arms are burning out early, you're probably pulling too much with them too soon.",
+  sled_push: "Low body angle, almost like pushing into a wall, short choppy steps drive more power than long strides. Keep your arms locked out, don't let the sled steer you.",
+  battle_ropes: "Power comes from your legs and core, not just your arms, stay in a slight squat throughout. Big waves beat fast tiny ones for actual conditioning value.",
+  sled_push_pull: "Same low angle and short steps on the push. On the pull, sit back like a reverse row and walk backwards under control, don't yank with your arms alone.",
+  hyrox_lunge_carry: "Keep the load close to your body, controlled stride length, this is about pacing for distance, not rushing individual steps.",
 };
 
 // --- reporting helpers ---
@@ -1024,7 +1032,14 @@ export default function WorkoutTracker() {
       {view === "nutrition" && <NutritionView checks={nutritionChecks} onSave={persistNutrition} />}
       {view === "report" && <ReportView logs={logs} bodyLogs={bodyLogs} meta={meta} archive={archive} />}
       {view === "settings" && (
-        <SettingsView meta={meta} archive={archive} onStartNewBlock={startNewBlock} onUpdateMeta={persistMeta} />
+        <SettingsView
+          meta={meta}
+          archive={archive}
+          onStartNewBlock={startNewBlock}
+          onUpdateMeta={persistMeta}
+          onExport={exportAllData}
+          onImport={importAllData}
+        />
       )}
 
       {/* Floating rest timer */}
@@ -1080,12 +1095,24 @@ export default function WorkoutTracker() {
   );
 }
 
-function SettingsView({ meta, archive, onStartNewBlock, onUpdateMeta }) {
+function SettingsView({ meta, archive, onStartNewBlock, onUpdateMeta, onExport, onImport }) {
   const [startDate, setStartDate] = useState(meta.startDate);
   const [benchBase, setBenchBase] = useState(meta.benchBase);
   const [squatBase, setSquatBase] = useState(meta.squatBase);
   const [confirmingNewBlock, setConfirmingNewBlock] = useState(false);
+  const [importStatus, setImportStatus] = useState(null);
   const currentWeek = weekFromDate(startDate);
+
+  const handleImportFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      await onImport(file);
+      setImportStatus("Backup restored.");
+    } catch (err) {
+      setImportStatus("That file couldn't be read, check it's the right backup file.");
+    }
+  };
 
   return (
     <div className="max-w-2xl mx-auto px-4 mt-5">
@@ -1195,6 +1222,29 @@ function SettingsView({ meta, archive, onStartNewBlock, onUpdateMeta }) {
               </button>
             </div>
           </div>
+        )}
+      </div>
+
+      <div className="rounded-xl p-4 border-2 mt-3" style={{ backgroundColor: C.card, borderColor: C.line }}>
+        <p className="text-sm font-bold mb-1" style={{ color: C.ink }}>
+          Backup & Restore
+        </p>
+        <p className="text-sm mb-3" style={{ color: C.sub }}>
+          Export everything to move to a new phone, or to send to Claude at the end of a block.
+        </p>
+        <div className="flex gap-2 flex-wrap items-center">
+          <button onClick={onExport} className="text-sm font-bold rounded-lg px-4 py-1.5" style={{ backgroundColor: C.ink, color: "#FFFFFF" }}>
+            Export backup
+          </button>
+          <label className="text-sm font-bold rounded-lg px-4 py-1.5 cursor-pointer" style={{ backgroundColor: C.accent, color: "#FFFFFF" }}>
+            Import backup
+            <input type="file" accept="application/json" onChange={handleImportFile} className="hidden" />
+          </label>
+        </div>
+        {importStatus && (
+          <p className="text-sm mt-2" style={{ color: C.sub }}>
+            {importStatus}
+          </p>
         )}
       </div>
 
